@@ -45,6 +45,21 @@ async function initDb() {
       );
 
       ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+
+      CREATE TABLE IF NOT EXISTS reminders (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        medicine_name TEXT,
+        pill_count INTEGER,
+        timings JSONB,
+        days JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      ALTER TABLE reminders ADD COLUMN IF NOT EXISTS initial_pill_count INTEGER;
+      ALTER TABLE reminders ADD COLUMN IF NOT EXISTS low_stock_notified BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE reminders ADD COLUMN IF NOT EXISTS taken_doses JSONB NOT NULL DEFAULT '{}';
+      UPDATE reminders SET initial_pill_count = COALESCE(pill_count, 0)
+        WHERE initial_pill_count IS NULL;
     `);
     console.log('PostgreSQL Database initialized and connected.');
   } finally {

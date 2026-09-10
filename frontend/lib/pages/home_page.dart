@@ -6,7 +6,10 @@ import '../models/prescription.dart';
 import 'scanner_page.dart';
 import 'profile_page.dart';
 import 'prescription_detail_page.dart';
-
+import 'reminder_detail_page.dart';
+import '../models/reminder.dart';
+import 'add_reminder_page.dart';
+import '../widgets/delete_confirmation_dialog.dart';
 class HomePage extends StatefulWidget {
   final int userId;
   final String userName;
@@ -21,7 +24,10 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final ApiService apiService = ApiService();
   List<Prescription> prescriptions = [];
+  List<Reminder> reminders = [];
   bool isLoading = true;
+  bool isLoadingReminders = true;
+  bool _deleting = false;
   
   int _currentIndex = 0;
   late String _currentUserName;
@@ -31,6 +37,22 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _currentUserName = widget.userName;
     fetchPrescriptions();
+    fetchReminders();
+  }
+
+
+  Future<void> fetchReminders() async {
+    try {
+      final data = await apiService.getReminders();
+      if (mounted) {
+        setState(() {
+          reminders = data;
+          isLoadingReminders = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => isLoadingReminders = false);
+    }
   }
 
   Future<void> fetchPrescriptions() async {
@@ -59,6 +81,26 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _confirmAndDelete(String item, Future<void> Function() delete,
+      Future<void> Function() refresh) async {
+    if (_deleting) return;
+    setState(() => _deleting = true);
+    try {
+      final confirmed = await confirmDeletion(context, item: item);
+      if (!confirmed || !mounted) return;
+      await delete();
+      if (mounted) await refresh();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Could not delete the item. Please try again.'),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
   String _formatDate(String rawDate) {
     if (rawDate.isEmpty) return 'Unknown Date';
     // If the date is already a string like "2023-09-05", we could parse it.
@@ -79,12 +121,14 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildHomeTab(String today) {
-    return SafeArea(
-      child: Column(
+    return DefaultTabController(
+      length: 2,
+      child: SafeArea(
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 32, 24, 16),
+              padding: const EdgeInsets.fromLTRB(24, 32, 24, 8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -108,22 +152,34 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
             ),
+            TabBar(
+              labelColor: const Color(0xFF26678C),
+              unselectedLabelColor: Colors.grey,
+              indicatorColor: const Color(0xFF26678C),
+              labelStyle: GoogleFonts.inter(fontWeight: FontWeight.bold),
+              tabs: const [
+                Tab(text: 'Documents'),
+                Tab(text: 'Reminders'),
+              ],
+            ),
+            const SizedBox(height: 16),
             Expanded(
-              child: isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : prescriptions.isEmpty
-                      ? Center(
-                          child: Text(
-                            "No prescriptions scanned yet.",
-                            style: GoogleFonts.inter(
-                                fontSize: 16, color: Colors.grey),
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 24, vertical: 8),
-                          itemCount: prescriptions.length,
-                          itemBuilder: (context, index) {
+              child: TabBarView(
+                children: [
+                  // --- DOCUMENTS TAB ---
+                  isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : prescriptions.isEmpty
+                          ? Center(
+                              child: Text(
+                                "No prescriptions scanned yet.",
+                                style: GoogleFonts.inter(fontSize: 16, color: Colors.grey),
+                              ),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                              itemCount: prescriptions.length,
+                              itemBuilder: (context, index) {
                             final p = prescriptions[index];
                             return GestureDetector(
                               onTap: () {
@@ -199,10 +255,12 @@ class _HomePageState extends State<HomePage> {
                                               padding: EdgeInsets.zero,
                                               constraints: const BoxConstraints(),
                                               icon: const Icon(Icons.close, color: Colors.grey, size: 20),
-                                              onPressed: () async {
-                                                await apiService.deletePrescription(p.id);
-                                                fetchPrescriptions();
-                                              },
+                                              tooltip: 'Delete prescription',
+                                              onPressed: _deleting ? null : () => _confirmAndDelete(
+                                                'this prescription',
+                                                () => apiService.deletePrescription(p.id),
+                                                fetchPrescriptions,
+                                              ),
                                             ),
                                           ],
                                         ),
@@ -238,10 +296,120 @@ class _HomePageState extends State<HomePage> {
                             );
                           },
                         ),
+                  // --- REMINDERS TAB ---
+                  isLoadingReminders
+                      ? const Center(child: CircularProgressIndicator())
+                      : reminders.isEmpty
+                          ? Center(
+                              child: Text("No reminders for today.", style: GoogleFonts.inter(fontSize: 16, color: Colors.grey)),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                              itemCount: reminders.length,
+                              itemBuilder: (context, index) {
+                                final r = reminders[index];
+                                return GestureDetector(
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => ReminderDetailPage(
+                                          reminder: r,
+                                          onUpdated: fetchReminders,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  child: Container(
+                                    margin: const EdgeInsets.only(bottom: 16),
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(16),
+                                      boxShadow: [
+                                        BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4)),
+                                      ],
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                children: [
+                                                  Text(r.medicineName, style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 16)),
+                                                  IconButton(
+                                                    padding: EdgeInsets.zero,
+                                                    constraints: const BoxConstraints(),
+                                                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                                                    tooltip: 'Delete reminder',
+                                                    onPressed: _deleting ? null : () => _confirmAndDelete(
+                                                      'the reminder for "${r.medicineName}"',
+                                                      () => apiService.deleteReminder(r.id),
+                                                      fetchReminders,
+                                                    ),
+                                                  )
+                                                ],
+                                              ),
+                                              const SizedBox(height: 8),
+                                              Text('Timings: ${r.timings.join(', ')}', style: GoogleFonts.inter(color: Colors.black54, fontSize: 13)),
+                                              const SizedBox(height: 4),
+                                              Text('Days: ${r.days.join(', ')}', style: GoogleFonts.inter(color: Colors.black54, fontSize: 13)),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            )
+                ],
+              ),
             ),
           ],
         ),
-      );
+      ),
+    );
+  }
+
+  void _showAddOptions() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.document_scanner, color: Color(0xFF26678C)),
+              title: Text('Scan Prescription', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+              onTap: () async {
+                Navigator.pop(context);
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => ScannerPage(userId: widget.userId)),
+                );
+                if (result == true) fetchPrescriptions();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.alarm_add, color: Color(0xFF26678C)),
+              title: Text('Add Medicine Reminder', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+              onTap: () async {
+                Navigator.pop(context);
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const AddReminderPage()),
+                );
+                if (result == true) fetchReminders();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -267,19 +435,11 @@ class _HomePageState extends State<HomePage> {
         width: 65,
         margin: const EdgeInsets.only(top: 30),
         child: FloatingActionButton(
-          onPressed: () async {
-            final result = await Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => ScannerPage(userId: widget.userId)),
-            );
-            if (result == true) {
-              fetchPrescriptions();
-            }
-          },
+          onPressed: _showAddOptions,
           backgroundColor: const Color(0xFF26678C),
           elevation: 4,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          child: const Icon(Icons.document_scanner, size: 30, color: Colors.white),
+          child: const Icon(Icons.add, size: 35, color: Colors.white),
         ),
       ),
       bottomNavigationBar: BottomAppBar(
