@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'login_page.dart';
+import '../services/auth_service.dart';
 
 class ProfilePage extends StatefulWidget {
   final String initialName;
@@ -255,12 +255,8 @@ class _ProfilePageState extends State<ProfilePage> {
 
             // Logout Button
             TextButton.icon(
-              onPressed: () {
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (context) => const LoginPage()),
-                  (Route<dynamic> route) => false,
-                );
+              onPressed: () async {
+                await AuthService().logout();
               },
               icon: const Icon(Icons.logout, color: Colors.redAccent),
               label: Text(

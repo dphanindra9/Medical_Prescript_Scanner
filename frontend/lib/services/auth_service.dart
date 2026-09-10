@@ -1,55 +1,51 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
-import 'api_service.dart'; // To reuse baseUrl
+import 'api_service.dart';
+import 'session_client.dart';
+import 'session_store.dart';
 
 class AuthService {
-  final String _baseUrl = '${ApiService.baseUrl.replaceAll('/api', '/api/auth')}';
+  final String _baseUrl = '${ApiService.baseUrl}/auth';
 
-  Future<Map<String, dynamic>> signUp(String name, String phoneNumber, String password) async {
+  Future<Map<String, dynamic>> _authenticate(String path, Map<String, String> body) async {
     final response = await http.post(
-      Uri.parse('$_baseUrl/signup'),
+      Uri.parse('$_baseUrl/$path'),
       headers: {'Content-Type': 'application/json'},
-      body: json.encode({
-        'name': name,
-        'phoneNumber': phoneNumber,
-        'password': password,
-      }),
-    );
+      body: json.encode(body),
+    ).timeout(const Duration(seconds: 15));
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw Exception(data['error'] ?? 'Unable to log in');
+    }
+    final user = Map<String, dynamic>.from(data['user']);
+    await SessionStore.save(data['token'] as String, user);
+    return user;
+  }
 
-    if (response.statusCode == 201) {
-      final responseData = json.decode(response.body);
-      final token = responseData['token'];
-      if (token != null) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('jwt_token', token);
-      }
-      return responseData['user'];
-    } else {
-      throw Exception(json.decode(response.body)['error'] ?? 'Failed to sign up');
+  Future<Map<String, dynamic>> signUp(String name, String phoneNumber, String password) =>
+      _authenticate('signup', {'name': name, 'phoneNumber': phoneNumber, 'password': password});
+
+  Future<Map<String, dynamic>> login(String phoneNumber, String password) =>
+      _authenticate('login', {'phoneNumber': phoneNumber, 'password': password});
+
+  Future<Map<String, dynamic>?> restoreSession() async {
+    final token = await SessionStore.token();
+    if (token == null) return null;
+    if (SessionStore.isExpired(token)) {
+      await SessionStore.clear(rejectedToken: token);
+      return null;
+    }
+    final client = SessionClient();
+    try {
+      final response = await client.get(Uri.parse('$_baseUrl/session'))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode == 401) return null;
+      if (response.statusCode != 200) throw Exception('Unable to verify session');
+      return Map<String, dynamic>.from(json.decode(response.body)['user']);
+    } finally {
+      client.close();
     }
   }
 
-  Future<Map<String, dynamic>> login(String phoneNumber, String password) async {
-    final response = await http.post(
-      Uri.parse('$_baseUrl/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: json.encode({
-        'phoneNumber': phoneNumber,
-        'password': password,
-      }),
-    );
-
-    if (response.statusCode == 200) {
-      final responseData = json.decode(response.body);
-      final token = responseData['token'];
-      if (token != null) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('jwt_token', token);
-      }
-      return responseData['user'];
-    } else {
-      throw Exception(json.decode(response.body)['error'] ?? 'Failed to log in');
-    }
-  }
+  Future<void> logout() => SessionStore.clear();
 }
